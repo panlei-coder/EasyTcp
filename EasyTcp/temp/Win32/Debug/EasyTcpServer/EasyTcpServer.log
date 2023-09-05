@@ -1,0 +1,10 @@
+﻿D:\visual studio\install\Community\MSBuild\Microsoft\VC\v160\Microsoft.CppClean.targets(77,5): warning : 对路径“d:\svn\document\easytcp\bin\win32\debug\easytcpserver.exe”的访问被拒绝。
+D:\visual studio\install\Community\MSBuild\Microsoft\VC\v160\Microsoft.CppBuild.targets(498,5): warning MSB8004: Intermediate 目录未以斜杠结尾。  此生成实例将添加斜杠，因为必须有这个斜杠才能正确计算 Intermediate 目录。
+D:\visual studio\install\Community\MSBuild\Microsoft\VC\v160\Microsoft.CppBuild.targets(499,5): warning MSB8004: Output 目录未以斜杠结尾。  此生成实例将添加斜杠，因为必须有这个斜杠才能正确计算 Output 目录。
+  server.cpp
+D:\SVN\document\EasyTcp\HelloSocket\EasyTcpServer\CELLClient.hpp(102,11): warning C4477: “printf”: 格式字符串“%d”需要类型“int”的参数，但可变参数 2 拥有了类型“time_t”
+D:\SVN\document\EasyTcp\HelloSocket\EasyTcpServer\CELLClient.hpp(102,11): message : 请考虑在格式字符串中使用“%lld”
+D:\SVN\document\EasyTcp\HelloSocket\EasyTcpServer\CELLClient.hpp(102,11): message : 请考虑在格式字符串中使用“%I64d”
+D:\SVN\document\EasyTcp\HelloSocket\EasyTcpServer\server.cpp(11,3): warning C4996: 'scanf': This function or variable may be unsafe. Consider using scanf_s instead. To disable deprecation, use _CRT_SECURE_NO_WARNINGS. See online help for details.
+D:\SVN\document\EasyTcp\HelloSocket\EasyTcpServer\CELLServer.hpp(144): warning C4715: “CellServer::OnRun”: 不是所有的控件路径都返回值
+LINK : fatal error LNK1104: 无法打开文件“D:\SVN\document\EasyTcp\HelloSocket\..\bin\Win32\Debug\EasyTcpServer.exe”

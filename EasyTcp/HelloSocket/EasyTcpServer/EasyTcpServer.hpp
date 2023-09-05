@@ -1,0 +1,258 @@
+#ifndef _EasyTcpServer_hpp_
+#define _EasyTcpServer_hpp_
+
+#include "CELL.hpp"
+#include"CELLServer.hpp"
+#include "INetEvent.hpp"
+
+class EasyTcpServer:public INetEvent
+{
+private:
+	SOCKET _server_sock;
+	std::vector<ClientSocket*> _clients;                 //所有客户端集合
+	std::vector<CellServer*> _cellServers;              //所有消费者（子服务器）集合
+	CELLTimestamp _tTime;                             //高精度计时器
+public:
+	std::atomic_int _recvCount;                              //接收消息计数
+	std::atomic_int _joinCount;                              //加入客户端计数
+	std::atomic_int _sendCount;                            //发送消息计数
+	std::atomic_int _msgCount;                             //消息处理计数
+public:
+	EasyTcpServer(){
+		_server_sock = INVALID_SOCKET;
+		_recvCount = 0;
+		_joinCount = 0;
+		_sendCount = 0;
+		_msgCount = 0;
+	}
+
+	virtual ~EasyTcpServer(){
+		_server_sock = INVALID_SOCKET;
+
+		for (auto client : _clients) {
+			delete client;
+		}
+		_clients.clear();
+	}
+
+	//初始化socket
+	int InitSocket(){
+#ifdef _WIN32
+		//启动windows socket环境
+		WORD ver = MAKEWORD(2, 2);  //dll(动态链接库)的版本号
+		WSADATA data;   //为windows返回的socket参数对象
+		WSAStartup(ver, &data);
+#endif
+		if (_server_sock != INVALID_SOCKET){
+			printf("<socket=%d>关闭旧连接...\n", (int)_server_sock);
+			Close();
+		}
+
+		//-----------------------
+		// 用socket api建立简易的tcp客户端
+		// 1 建立一个socket
+		_server_sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+		if (INVALID_SOCKET == _server_sock){
+			printf("错误，建立socket失败...\n");
+		}
+		else {
+			printf("建立socket成功...\n");
+		}
+		return _server_sock;
+	}
+
+	//绑定网络端口
+	int Bind(const char* ip,unsigned short port){
+		// 2 bind 绑定用于接受客户端连接的网络端口
+		sockaddr_in _sin = {};
+		/*
+		    struct sockaddr_in{
+		    sa_family_t     sin_family;   //地址族（Address Family），也就是地址类型
+		    uint16_t        sin_port;     //16位的端口号
+		    struct in_addr  sin_addr;     //32位IP地址
+		    char            sin_zero[8];  //不使用，一般用0填充
+		};
+		htons将整型变量从主机字节顺序转变成网络字节顺序(big-endian,大尾端)，
+		就是整数在地址空间存储方式变为高位字节存放在内存的低地址处。
+		*/
+		_sin.sin_family = AF_INET;
+		_sin.sin_port = htons(port); // host to net unsigned short
+#ifdef _WIN32
+		if (ip){
+			_sin.sin_addr.S_un.S_addr = inet_addr(ip);//inet_addr("127.0.0.1")
+		}
+		else{
+			_sin.sin_addr.S_un.S_addr = INADDR_ANY;//inet_addr("127.0.0.1")
+		}
+#else
+		if (ip){
+			_sin.sin_addr.s_addr = inet_addr(ip);//inet_addr("127.0.0.1")
+		}
+		else{
+			_sin.sin_addr.s_addr = INADDR_ANY;//inet_addr("127.0.0.1")
+		}
+#endif
+
+		//函数名发生冲突：https://www.cnblogs.com/jiguang321/p/10465012.html
+		int ret = bind(_server_sock, (sockaddr*)&_sin, sizeof(_sin));
+		if (SOCKET_ERROR == ret){
+			printf("错误，绑定网络端口<%d>失败...\n",port);
+		}
+		else{
+			printf("绑定网络端口<%d>成功...\n",port);
+		}
+		return ret;
+	}
+
+	//监听网络端口
+	int Listen(int backlog){
+		// 3 listen 监听网络端口
+		int ret = listen(_server_sock, backlog);
+		if (SOCKET_ERROR == ret){
+			printf("socker=<%d>错误，监听网络端口失败...\n",_server_sock);
+		}
+		else {
+			printf("socket=<%d>监听网络端口成功...\n", _server_sock);
+		}
+		return ret;
+	}
+	
+	//等待客户端连接
+	void Accept(){
+		// 4 accept 等待接受客户端连接
+		sockaddr_in clientAddr = {};
+		int  nAddrLen = sizeof(sockaddr_in);
+		SOCKET client_sock = INVALID_SOCKET;
+#ifdef _WIN32
+		client_sock = accept(_server_sock, (sockaddr*)&clientAddr, &nAddrLen);
+#else
+		client_sock = accept(_server_sock, (sockaddr*)&clientAddr, (socklen_t*)&nAddrLen);
+#endif
+
+		if (INVALID_SOCKET == client_sock){
+			printf("错误，接收到无效客户端socket...\n");
+		}
+		else{
+			//SendDataToAll(client_sock);
+			printf("新客户端<%d>加入：socket = %d,IP=%s\n", (const int)_joinCount,(int)client_sock, inet_ntoa(clientAddr.sin_addr));//inet_ntoa网络字节序IP转化点分十进制IP
+			addClientToCellServers(new ClientSocket(client_sock));
+		}
+	}
+
+	void addClientToCellServers(ClientSocket* pClient){
+		//_clients.push_back(pClient);
+		auto pMinServer = _cellServers[0];
+		for (auto pCellServer : _cellServers)	{
+			if (pMinServer->getClientCount() > pCellServer->getClientCount()){
+				pMinServer = pCellServer;
+			}
+		}
+		pMinServer->addClient(pClient);   //添加到缓冲队列中
+		OnNetJoin(pClient);
+	}
+
+	void Start(int cellserver_thread_count){
+		for (int n = 0; n < cellserver_thread_count; n++){
+			auto ser = new CellServer(n+1);
+			_cellServers.push_back(ser);
+			ser->setNetEventObj(this);
+			ser->Start();
+		}
+	}
+
+	//查询网络消息
+	void OnRun(){
+		if (IsRun()){
+			time4Msg();
+			//伯克利 socket（描述字）
+			fd_set fdRead;   //用来检查可读性的一组文件描述字 
+			fd_set fdWrite;  //用来检查可写性的一组文件描述字
+			fd_set fdExp;     //用来检查是否有异常条件出现的文件描述字（注：错误不包含在异常条件内）
+
+			FD_ZERO(&fdRead);
+			FD_ZERO(&fdWrite);
+			FD_ZERO(&fdExp);
+
+			FD_SET(_server_sock, &fdRead);
+			FD_SET(_server_sock, &fdWrite);
+			FD_SET(_server_sock, &fdExp);
+
+			//size_t(无符号整数)的目的是提供一种可移植的方法来声明与系统中可寻址的内存区域一致的长度,取系统所能达到的最大值
+			//size_t为无符号数，n = n - 1 ==> n = n + (-1),而-1会被转化成无符号数，变成一个很大的数，就会出现越界
+
+			//nfds是一个整数值，是指fd_set集合中所有描述符（socket）的范围，而不是数量
+			//即是所有文件描述符的最大值+1，在windows中这个参数（无所谓）可以写0，已经帮我们实现了
+			timeval t = { 0,1 };
+			int ret = select(_server_sock + 1, &fdRead, &fdWrite, &fdExp, &t); //返回值ret<0有错误，=0没有操作，>0有操作
+			if (ret < 0){
+				printf("select任务结束...\n");
+				return;
+			}
+			//socket有可读，则有客户端连接进来(检查server_sock是否在集合中)
+			if (FD_ISSET(_server_sock, &fdRead)){
+				FD_CLR(_server_sock, &fdRead); // 清除操作，只是清理掉了计数器
+				Accept();				
+			}
+		}
+	}
+	
+	//是否工作中
+	bool IsRun(){
+		return _server_sock != INVALID_SOCKET;
+	}
+
+	//关闭连接
+	void Close(){
+		//加一个判断防止多次调用
+		if (_server_sock != INVALID_SOCKET){
+			printf("EasyTcpServer%d:close begin\n", _server_sock);
+
+#ifdef _WIN32
+			closesocket(_server_sock);
+			//--------------------------
+			// 清除windows socket环境
+			WSACleanup();
+#else
+			close(_server_sock);
+#endif
+			_server_sock = INVALID_SOCKET;
+			_joinCount = 0;
+
+			for (auto cellServer : _cellServers) {
+				cellServer->Close();
+				delete cellServer;
+			}
+			_cellServers.clear();
+
+			printf("EasyTcpServer%d:close end\n", _server_sock);
+		}
+	}
+
+	//消息响应
+	void time4Msg(){
+		auto t = _tTime.getElapsedSecond();
+		if (t >= 1.0){
+			printf("time<%lf>,socket<%d>,clients<%d>,recvCount<%d>,msgCount<%d>\n", t, _server_sock, (const int)_joinCount, (const int)(_recvCount /t),(const int)(_msgCount / t));
+			_recvCount = 0;
+			_msgCount = 0;
+			_tTime.update();
+		}
+	}
+
+	virtual void OnNetJoin(ClientSocket* pClient){
+		_joinCount++;
+	}
+
+	virtual void OnNetLeave(ClientSocket* pClient){
+		_joinCount--;
+	}
+
+	virtual void OnNetMsg(CellServer* pCellServer, ClientSocket* pClient, DataHeader* dh){
+		_msgCount++;
+	}
+
+	virtual void OnNetRecv(ClientSocket* pClient){
+		_recvCount++;
+	}
+};
+#endif // !_EasyTcpServer_hpp_
